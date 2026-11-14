@@ -30,6 +30,16 @@ def list_entries(
     return PageResult(items=items, total=total, page=page, size=size)
 
 
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出深度爬取清单：返回当前过滤条件下的全量数据。
+
+    注意：必须注册在 "/{entry_id}" 之前，否则 "export" 会被当成 entry_id 解析。
+    """
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "deepcrawl", "total": total, "items": items}
+
+
 @router.get("/{entry_id}", response_model=dict)
 def get_entry(entry_id: int) -> dict:
     """读取单条爬虫配置明细；不存在时给出可读的错误说明。"""
@@ -50,16 +60,16 @@ def create_entry(payload: EntryPayload) -> ActionResult:
 
 @router.post("/{entry_id}/actions", response_model=ActionResult)
 def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
-    """对单条爬虫配置执行提交策略评审、启用爬取、暂停爬取；不允许的动作会被拦下并说明原因。"""
-    action = str(payload.values.get("action") or "").strip()
-    entry, message = service.run_action(entry_id, action)
+    """对单条爬虫配置执行提交策略评审、启用爬取、暂停爬取。
+
+    动作必须满足单向状态机与站点准入；可携带 version 做乐观并发控制，
+    不允许的动作或准入失败会被拦下并在 message 中说明冲突版本。
+    """
+    values = payload.values
+    action = str(values.get("action") or "").strip()
+    raw_version = values.get("version")
+    expected_version = int(raw_version) if raw_version is not None and str(raw_version).strip() != "" else None
+    entry, message = service.run_action(entry_id, action, expected_version=expected_version)
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出深度爬取清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "deepcrawl", "total": total, "items": items}

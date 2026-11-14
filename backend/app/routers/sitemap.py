@@ -30,6 +30,16 @@ def list_entries(
     return PageResult(items=items, total=total, page=page, size=size)
 
 
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出站点地图清单：返回当前过滤条件下的全量数据。
+
+    注意：必须注册在 "/{entry_id}" 之前，否则 "export" 会被当成 entry_id 解析。
+    """
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "sitemap", "total": total, "items": items}
+
+
 @router.get("/{entry_id}", response_model=dict)
 def get_entry(entry_id: int) -> dict:
     """读取单条站点描述明细；不存在时给出可读的错误说明。"""
@@ -50,16 +60,22 @@ def create_entry(payload: EntryPayload) -> ActionResult:
 
 @router.post("/{entry_id}/actions", response_model=ActionResult)
 def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
-    """对单条站点描述执行发起探测、确认识别、标记屏蔽；不允许的动作会被拦下并说明原因。"""
-    action = str(payload.values.get("action") or "").strip()
-    entry, message = service.run_action(entry_id, action)
+    """对单条站点描述执行发起探测、确认识别、标记屏蔽。
+
+    标记屏蔽必须携带 reason（屏蔽原因），后端记录探测时间与原因；可携带 version
+    做乐观并发控制，状态机/版本不满足时拦下并说明冲突版本。
+    """
+    values = payload.values
+    action = str(values.get("action") or "").strip()
+    raw_version = values.get("version")
+    expected_version = int(raw_version) if raw_version is not None and str(raw_version).strip() != "" else None
+    reason = str(values.get("reason") or "").strip() or None
+    entry, message = service.run_action(
+        entry_id,
+        action,
+        expected_version=expected_version,
+        reason=reason,
+    )
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出站点地图清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "sitemap", "total": total, "items": items}
